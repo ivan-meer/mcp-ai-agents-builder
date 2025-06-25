@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Send,
   Bot,
@@ -26,10 +27,14 @@ import {
   Globe,
   Brain,
   MessageSquare,
+  Paperclip,
+  Server,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/ui/use-toast";
 import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Message {
   id: string;
@@ -76,7 +81,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("perplexity");
   const [selectedModel, setSelectedModel] = useState("sonar");
+  const [availableModels, setAvailableModels] = useState<Record<string, any[]>>(
+    {},
+  );
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [selectedTools, setSelectedTools] = useState<string[]>(["search"]);
+  const [selectedAgent, setSelectedAgent] = useState("default");
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const providers = {
@@ -130,11 +143,104 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     },
   ];
 
+  const availableAgents = [
+    {
+      id: "default",
+      name: "Default Assistant",
+      description: "General purpose AI assistant",
+    },
+    {
+      id: "customer-support",
+      name: "Customer Support",
+      description: "Specialized for customer inquiries",
+    },
+    {
+      id: "data-analyst",
+      name: "Data Analyst",
+      description: "Helps with data analysis tasks",
+    },
+    {
+      id: "task-manager",
+      name: "Task Manager",
+      description: "Organizes and prioritizes tasks",
+    },
+  ];
+
   useEffect(() => {
     if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    loadModels();
+  }, [selectedProvider]);
+
+  const loadModels = async () => {
+    if (availableModels[selectedProvider]) return;
+
+    setLoadingModels(true);
+    try {
+      let functionName = "";
+      switch (selectedProvider) {
+        case "openai":
+          functionName = "supabase-functions-openai-models";
+          break;
+        case "anthropic":
+          functionName = "supabase-functions-anthropic-models";
+          break;
+        default:
+          // Perplexity uses static models
+          setAvailableModels((prev) => ({
+            ...prev,
+            [selectedProvider]:
+              providers[selectedProvider as keyof typeof providers].models,
+          }));
+          setLoadingModels(false);
+          return;
+      }
+
+      const { data, error } = await supabase.functions.invoke(functionName);
+
+      if (error) throw error;
+
+      let models = [];
+      if (selectedProvider === "openai") {
+        models =
+          data.data?.map((model: any) => ({
+            id: model.id,
+            name: model.id,
+          })) || [];
+      } else if (selectedProvider === "anthropic") {
+        models =
+          data.data?.map((model: any) => ({
+            id: model.id,
+            name: model.display_name || model.id,
+          })) || [];
+      }
+
+      setAvailableModels((prev) => ({
+        ...prev,
+        [selectedProvider]: models,
+      }));
+
+      if (
+        models.length > 0 &&
+        !models.find((m: any) => m.id === selectedModel)
+      ) {
+        setSelectedModel(models[0].id);
+      }
+    } catch (error) {
+      console.error("Failed to load models:", error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось загрузить модели",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
   const handleClose = () => {
     if (onClose) {
@@ -150,6 +256,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } else {
       navigate(-1);
     }
+  };
+
+  const handleFileAttach = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setAttachedFiles((prev) => [...prev, ...files]);
+  };
+
+  const removeFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const toggleTool = (toolId: string) => {
+    setSelectedTools((prev) =>
+      prev.includes(toolId)
+        ? prev.filter((id) => id !== toolId)
+        : [...prev, toolId],
+    );
   };
 
   const handleSendMessage = async () => {
@@ -169,9 +296,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     try {
       // Check if we need to use tools first
       const shouldUseSearch =
-        agentConfig.tools?.includes("search") &&
+        selectedTools.includes("search") &&
         (inputValue.toLowerCase().includes("search") ||
-          inputValue.toLowerCase().includes("find"));
+          inputValue.toLowerCase().includes("find") ||
+          inputValue.toLowerCase().includes("найди") ||
+          inputValue.toLowerCase().includes("поиск"));
 
       let searchResults = null;
       if (shouldUseSearch) {
@@ -188,14 +317,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
       }
 
+      // Prepare agent-specific system prompt
+      const selectedAgentConfig = availableAgents.find(
+        (a) => a.id === selectedAgent,
+      );
+      const systemPrompt = selectedAgentConfig
+        ? `You are ${selectedAgentConfig.name}. ${selectedAgentConfig.description}. ${agentConfig.systemPrompt}`
+        : agentConfig.systemPrompt;
+
       // Prepare messages for the chat completion
       const chatMessages = [
         {
           role: "system",
           content:
-            agentConfig.systemPrompt +
+            systemPrompt +
             (searchResults
               ? `\n\nSearch results: ${JSON.stringify(searchResults)}`
+              : "") +
+            (attachedFiles.length > 0
+              ? `\n\nAttached files: ${attachedFiles.map((f) => f.name).join(", ")}`
               : ""),
         },
         ...messages
@@ -207,6 +347,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         { role: "user", content: inputValue },
       ];
 
+      // Create streaming assistant message
+      const assistantMessageId = (Date.now() + 1).toString();
+      const assistantMessage: Message = {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        timestamp: new Date(),
+        provider: selectedProvider,
+        model: selectedModel,
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+
       const { data, error } = await supabase.functions.invoke(
         "supabase-functions-chat-completions",
         {
@@ -216,6 +369,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             messages: chatMessages,
             temperature: 0.7,
             max_tokens: 1000,
+            stream: true,
           },
         },
       );
@@ -224,23 +378,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         throw error;
       }
 
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content:
-          data.choices[0]?.message?.content ||
-          "I apologize, but I couldn't generate a response.",
-        timestamp: new Date(),
-        provider: selectedProvider,
-        model: selectedModel,
-      };
+      // Handle streaming response
+      if (data.choices && data.choices[0]?.message?.content) {
+        const content = data.choices[0].message.content;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId ? { ...msg, content } : msg,
+          ),
+        );
+      }
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      // Clear attached files after sending
+      setAttachedFiles([]);
     } catch (error) {
       console.error("Chat error:", error);
       toast({
-        title: "Error",
-        description: "Failed to send message. Please try again.",
+        title: "Ошибка",
+        description: "Не удалось отправить сообщение. Попробуйте еще раз.",
         variant: "destructive",
       });
     } finally {
@@ -307,9 +461,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         <Separator />
 
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Provider:</span>
+            <span className="text-muted-foreground">Агент:</span>
+            <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+              <SelectTrigger className="w-40 h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {availableAgents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Провайдер:</span>
             <Select
               value={selectedProvider}
               onValueChange={setSelectedProvider}
@@ -331,21 +501,55 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Model:</span>
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
+            <span className="text-muted-foreground">Модель:</span>
+            <Select
+              value={selectedModel}
+              onValueChange={setSelectedModel}
+              disabled={loadingModels}
+            >
               <SelectTrigger className="w-40 h-8">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {providers[
-                  selectedProvider as keyof typeof providers
-                ]?.models.map((model) => (
-                  <SelectItem key={model.id} value={model.id}>
-                    {model.name}
+                {loadingModels ? (
+                  <SelectItem value="loading" disabled>
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Загрузка...
+                    </div>
                   </SelectItem>
-                ))}
+                ) : (
+                  (
+                    availableModels[selectedProvider] ||
+                    providers[selectedProvider as keyof typeof providers]
+                      ?.models ||
+                    []
+                  ).map((model: any) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Инструменты:</span>
+            <div className="flex gap-1">
+              {availableTools.map((tool) => (
+                <div key={tool.id} className="flex items-center space-x-1">
+                  <Checkbox
+                    id={tool.id}
+                    checked={selectedTools.includes(tool.id)}
+                    onCheckedChange={() => toggleTool(tool.id)}
+                  />
+                  <label htmlFor={tool.id} className="text-xs cursor-pointer">
+                    {tool.name}
+                  </label>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -373,9 +577,87 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       : "bg-muted"
                   }`}
                 >
-                  <p className="text-sm whitespace-pre-wrap">
-                    {message.content}
-                  </p>
+                  {message.role === "assistant" ? (
+                    <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          div: ({ children }) => (
+                            <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                              {children}
+                            </div>
+                          ),
+                          p: ({ children }) => (
+                            <p className="mb-2 last:mb-0">{children}</p>
+                          ),
+                          h1: ({ children }) => (
+                            <h1 className="text-lg font-bold mb-2">
+                              {children}
+                            </h1>
+                          ),
+                          h2: ({ children }) => (
+                            <h2 className="text-base font-semibold mb-2">
+                              {children}
+                            </h2>
+                          ),
+                          h3: ({ children }) => (
+                            <h3 className="text-sm font-medium mb-1">
+                              {children}
+                            </h3>
+                          ),
+                          ul: ({ children }) => (
+                            <ul className="list-disc list-inside mb-2">
+                              {children}
+                            </ul>
+                          ),
+                          ol: ({ children }) => (
+                            <ol className="list-decimal list-inside mb-2">
+                              {children}
+                            </ol>
+                          ),
+                          li: ({ children }) => (
+                            <li className="mb-1">{children}</li>
+                          ),
+                          code: ({ children, inline }) =>
+                            inline ? (
+                              <code className="bg-muted px-1 py-0.5 rounded text-xs">
+                                {children}
+                              </code>
+                            ) : (
+                              <code className="block bg-muted p-2 rounded text-xs overflow-x-auto">
+                                {children}
+                              </code>
+                            ),
+                          pre: ({ children }) => (
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto mb-2">
+                              {children}
+                            </pre>
+                          ),
+                          blockquote: ({ children }) => (
+                            <blockquote className="border-l-4 border-muted-foreground pl-4 italic mb-2">
+                              {children}
+                            </blockquote>
+                          ),
+                          a: ({ children, href }) => (
+                            <a
+                              href={href}
+                              className="text-primary underline hover:no-underline"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {children}
+                            </a>
+                          ),
+                        }}
+                      >
+                        {message.content || "Думаю..."}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <p className="text-sm whitespace-pre-wrap">
+                      {message.content}
+                    </p>
+                  )}
                   <div className="flex items-center justify-between mt-1 text-xs opacity-70">
                     <span>
                       {message.timestamp.toLocaleTimeString([], {
@@ -426,6 +708,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </ScrollArea>
 
         <div className="p-4 border-t">
+          {attachedFiles.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {attachedFiles.map((file, index) => (
+                <div
+                  key={index}
+                  className="flex items-center gap-1 bg-muted px-2 py-1 rounded text-xs"
+                >
+                  <span>{file.name}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-4 w-4 p-0"
+                    onClick={() => removeFile(index)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
           <form
             className="flex gap-2"
             onSubmit={(e) => {
@@ -433,11 +735,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               handleSendMessage();
             }}
           >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={handleFileAttach}
+              disabled={isLoading}
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
+              placeholder="Введите ваше сообщение..."
               className="flex-1"
               disabled={isLoading}
             />

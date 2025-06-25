@@ -6,7 +6,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { provider, model, messages, ...options } = await req.json();
+    const {
+      provider,
+      model,
+      messages,
+      stream = false,
+      ...options
+    } = await req.json();
 
     let url = "";
     let headers: Record<string, string> = {
@@ -26,6 +32,7 @@ Deno.serve(async (req) => {
         body = {
           model: model || "sonar",
           messages,
+          stream,
           ...options,
         };
         break;
@@ -39,6 +46,7 @@ Deno.serve(async (req) => {
         body = {
           model: model || "gpt-4o",
           messages,
+          stream,
           ...options,
         };
         break;
@@ -63,6 +71,7 @@ Deno.serve(async (req) => {
             options.max_tokens || options.max_completion_tokens || 1000,
           messages: conversationMessages,
           ...(systemMessage && { system: systemMessage.content }),
+          stream,
           ...options,
         };
         break;

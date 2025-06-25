@@ -280,11 +280,13 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack }) => {
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
-          {onBack && (
-            <Button variant="ghost" size="icon" onClick={onBack}>
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => window.history.back()}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <div>
             <h1 className="text-2xl font-bold">Settings</h1>
             <p className="text-muted-foreground">

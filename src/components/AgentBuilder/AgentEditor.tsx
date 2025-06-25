@@ -182,7 +182,7 @@ export default ${agentConfig.name.replace(/\s+/g, "")}Agent;
           <div className="flex items-center gap-4 min-w-0 flex-1">
             <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
               <ArrowLeft className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Back</span>
+              <span className="hidden sm:inline">Назад</span>
             </Button>
             <div className="min-w-0 flex-1">
               <h1 className="text-xl lg:text-2xl font-bold truncate">
