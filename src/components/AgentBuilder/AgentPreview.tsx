@@ -7,13 +7,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import ChatInterface from "@/components/Chat/ChatInterface";
 import {
   MessageCircle,
   Code,
   Bug,
   Settings,
-  RefreshCw,
   Send,
   Maximize2,
   Minimize2,
@@ -160,6 +158,16 @@ const AgentPreview = ({
     addNextMessage();
   };
 
+  const formatMessageContent = (content: string) => {
+    // Simple text formatting without markdown
+    return content.split("\n").map((line, index) => (
+      <React.Fragment key={index}>
+        {line}
+        {index < content.split("\n").length - 1 && <br />}
+      </React.Fragment>
+    ));
+  };
+
   const renderChatPreview = () => (
     <div className="flex flex-col h-full bg-background">
       <div className="flex items-center justify-between p-4 border-b">
@@ -172,7 +180,9 @@ const AgentPreview = ({
           </Avatar>
           <div>
             <h3 className="font-semibold">{agentName}</h3>
-            <p className="text-sm text-muted-foreground">{agentDescription}</p>
+            <div className="text-sm text-muted-foreground">
+              {agentDescription}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -221,13 +231,15 @@ const AgentPreview = ({
                     : "bg-muted"
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                <p className="text-xs opacity-70 mt-1">
+                <div className="text-sm">
+                  {formatMessageContent(message.content)}
+                </div>
+                <div className="text-xs opacity-70 mt-1">
                   {message.timestamp.toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
-                </p>
+                </div>
               </div>
 
               {message.role === "user" && (
@@ -283,7 +295,6 @@ const AgentPreview = ({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Type your message..."
-            className="flex-1"
             disabled={previewLoading}
           />
           <Button
@@ -475,11 +486,11 @@ const AgentPreview = ({
         <div>
           <h4 className="text-sm font-medium mb-3">Integration Info</h4>
           <div className="bg-muted p-3 rounded-md">
-            <p className="text-xs text-muted-foreground mb-2">
+            <div className="text-xs text-muted-foreground mb-2">
               This preview shows how your agent will behave when integrated into
               your application. The actual implementation will use real AI
               models and your configured settings.
-            </p>
+            </div>
             <div className="flex gap-2 mt-3">
               <Badge variant="outline" className="text-xs">
                 React Component
